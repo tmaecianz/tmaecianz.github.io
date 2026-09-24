@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Comms</title>
+  <meta name="description" content="Minimal flat Nordic dashboard and online chat.">
+  
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Nordic Flat Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Firebase SDKs (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+</head>
+<body>
+
+  <div class="nordic-container">
+
+    <!-- ==================================================================
+         VIEW 1: COMMS DASHBOARD
+         ================================================================== -->
+    <main id="dashboardView" class="nordic-view active-view">
+      
+      <h1 class="page-title">Comms</h1>
+
+      <!-- Custom Message & Alert Trigger -->
+      <form id="dispatchForm" class="dispatch-form">
+        <input 
+          type="text" 
+          id="customMessageInput" 
+          class="nord-input" 
+          placeholder="Type custom message..." 
+          autocomplete="off"
+        />
+        <button type="submit" id="sendMessageBtn" class="nord-btn-primary">
+          Send Alert Notification
+        </button>
+      </form>
+
+      <!-- Online Chat Entry (Placed Above Contacts) -->
+      <section class="dashboard-section">
+        <h2 class="section-title">Online Chat</h2>
+        <div class="chat-entry-box">
+          <button type="button" id="enterChatBtn" class="nord-btn-chat-primary">
+            Open Chat Room
+          </button>
+        </div>
+      </section>
+
+      <!-- Contacts List -->
+      <section class="dashboard-section">
+        <h2 class="section-title">Contacts</h2>
+        <div id="contactsList" class="contacts-compact-list">
+          <!-- Rendered dynamically -->
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ==================================================================
+         VIEW 2: ONLINE CHAT ROOM
+         ================================================================== -->
+    <section id="chatView" class="nordic-view">
+      
+      <!-- Chat Header -->
+      <header class="chat-topbar">
+        <button type="button" id="backToDashboardBtn" class="nord-btn-back">
+          Back
+        </button>
+        <div class="chat-topbar-info">
+          <span class="chat-title-text">Comms</span>
+        </div>
+        <div class="chat-topbar-actions">
+          <button type="button" id="clearChatBtn" class="nord-btn-clear" title="Clear all messages">
+            Clear
+          </button>
+          <button type="button" id="inviteContactBtn" class="nord-btn-invite" title="Invite contact">
+            Invite
+          </button>
+          <button type="button" id="userProfileBtn" class="nord-user-btn" title="Change display name">
+            <span id="userNameLabel">Set Name</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Chat Feed -->
+      <div id="chatMessages" class="chat-feed">
+        <div id="chatEmptyState" class="chat-empty-notice">
+          No messages yet. Start the conversation.
+        </div>
+      </div>
+
+      <!-- Chat Input Form -->
+      <form id="chatForm" class="chat-bottom-bar">
+        <input 
+          type="text" 
+          id="chatInput" 
+          class="nord-chat-input" 
+          placeholder="Type message..." 
+          autocomplete="off" 
+          maxlength="500"
+        />
+        <button type="submit" id="chatSendBtn" class="nord-btn-send">
+          Send
+        </button>
+      </form>
+
+    </section>
+
+  </div>
+
+  <!-- Display Name Modal Dialog -->
+  <div id="nameModal" class="nord-modal-backdrop">
+    <div class="nord-modal-box">
+      <h3 class="modal-heading">Display Name</h3>
+      <p class="modal-subtext">Enter a name to chat in this session.</p>
+
+      <form id="nameForm" class="modal-form">
+        <input 
+          type="text" 
+          id="displayNameInput" 
+          class="nord-input" 
+          placeholder="Enter display name..." 
+          maxlength="24"
+          required
+        />
+        <div class="modal-btn-row">
+          <button type="button" id="randomGuestBtn" class="nord-btn-secondary">
+            Random
+          </button>
+          <button type="submit" class="nord-btn-primary">
+            Join
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Invite Contact Modal Dialog -->
+  <div id="inviteModal" class="nord-modal-backdrop">
+    <div class="nord-modal-box invite-modal-box">
+      <div class="modal-header-row">
+        <h3 class="modal-heading">Invite Contact</h3>
+        <button type="button" id="closeInviteModalBtn" class="nord-btn-close">Close</button>
+      </div>
+      <p class="modal-subtext">Select a contact to send an email invitation requesting them to join this chat room.</p>
+
+      <div id="inviteContactsList" class="invite-contacts-list">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Stack -->
+  <div id="toastContainer" class="toast-stack"></div>
+
+  <!-- Script -->
+  <script src="js/app.js"></script>
+</body>
+</html>
