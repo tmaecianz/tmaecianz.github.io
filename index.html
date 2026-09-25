@@ -51,6 +51,14 @@
           <button type="button" id="enterChatBtn" class="nord-btn-chat-primary">
             Open Chat Room
           </button>
+          <div class="custom-room-actions">
+            <button type="button" id="createCustomRoomBtn" class="nord-btn-chat-secondary">
+              Create Custom Room
+            </button>
+            <button type="button" id="joinCustomRoomBtn" class="nord-btn-chat-secondary">
+              Join Custom Room
+            </button>
+          </div>
         </div>
       </section>
 
@@ -75,7 +83,8 @@
           Back
         </button>
         <div class="chat-topbar-info">
-          <span class="chat-title-text">Comms</span>
+          <span id="chatTitleText" class="chat-title-text">Online Chat</span>
+          <span id="chatRoomBadge" class="chat-room-badge">Common Room</span>
         </div>
         <div class="chat-topbar-actions">
           <button type="button" id="clearChatBtn" class="nord-btn-clear" title="Clear all messages">
@@ -155,6 +164,86 @@
       <div id="inviteContactsList" class="invite-contacts-list">
         <!-- Rendered dynamically -->
       </div>
+    </div>
+  </div>
+
+  <!-- Create Custom Room Modal Dialog -->
+  <div id="createRoomModal" class="nord-modal-backdrop">
+    <div class="nord-modal-box">
+      <div class="modal-header-row">
+        <h3 class="modal-heading">Create Custom Room</h3>
+        <button type="button" id="closeCreateRoomModalBtn" class="nord-btn-close">Close</button>
+      </div>
+      <p class="modal-subtext">Set a room name and password to start a private room.</p>
+
+      <form id="createRoomForm" class="modal-form">
+        <input 
+          type="text" 
+          id="createRoomNameInput" 
+          class="nord-input" 
+          placeholder="Room name (e.g. Alpha)" 
+          maxlength="28"
+          required
+          autocomplete="off"
+        />
+        <input 
+          type="password" 
+          id="createRoomPasswordInput" 
+          class="nord-input" 
+          placeholder="Set room password" 
+          maxlength="32"
+          required
+          autocomplete="off"
+        />
+        <div class="modal-btn-row">
+          <button type="button" id="cancelCreateRoomBtn" class="nord-btn-secondary">
+            Cancel
+          </button>
+          <button type="submit" id="submitCreateRoomBtn" class="nord-btn-primary">
+            Create
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Join Custom Room Modal Dialog -->
+  <div id="joinRoomModal" class="nord-modal-backdrop">
+    <div class="nord-modal-box">
+      <div class="modal-header-row">
+        <h3 class="modal-heading">Join Custom Room</h3>
+        <button type="button" id="closeJoinRoomModalBtn" class="nord-btn-close">Close</button>
+      </div>
+      <p class="modal-subtext">Enter the room name and password to enter.</p>
+
+      <form id="joinRoomForm" class="modal-form">
+        <input 
+          type="text" 
+          id="joinRoomNameInput" 
+          class="nord-input" 
+          placeholder="Room name..." 
+          maxlength="28"
+          required
+          autocomplete="off"
+        />
+        <input 
+          type="password" 
+          id="joinRoomPasswordInput" 
+          class="nord-input" 
+          placeholder="Room password..." 
+          maxlength="32"
+          required
+          autocomplete="off"
+        />
+        <div class="modal-btn-row">
+          <button type="button" id="cancelJoinRoomBtn" class="nord-btn-secondary">
+            Cancel
+          </button>
+          <button type="submit" id="submitJoinRoomBtn" class="nord-btn-primary">
+            Join
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 

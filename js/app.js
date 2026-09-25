@@ -18,10 +18,26 @@ if (!firebase.apps.length) {
 const db = firebase.firestore();
 const auth = firebase.auth();
 
+// Enable IndexedDB Multi-Tab Offline Persistence for faster loads and reduced read costs
+if (db && db.enablePersistence) {
+  db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+}
+
+// Cryptographic SHA-256 password hashing with room-specific salt
+async function hashPassword(password, roomId) {
+  const enc = new TextEncoder();
+  const data = enc.encode(`${roomId}:${password.trim()}`);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 // DOM Elements - Navigation & Views
 const dashboardView = document.getElementById("dashboardView");
 const chatView = document.getElementById("chatView");
 const enterChatBtn = document.getElementById("enterChatBtn");
+const createCustomRoomBtn = document.getElementById("createCustomRoomBtn");
+const joinCustomRoomBtn = document.getElementById("joinCustomRoomBtn");
 const backToDashboardBtn = document.getElementById("backToDashboardBtn");
 
 // DOM Elements - Dashboard
@@ -30,6 +46,8 @@ const customMessageInput = document.getElementById("customMessageInput");
 const contactsList = document.getElementById("contactsList");
 
 // DOM Elements - Chat
+const chatTitleText = document.getElementById("chatTitleText");
+const chatRoomBadge = document.getElementById("chatRoomBadge");
 const userNameLabel = document.getElementById("userNameLabel");
 const userProfileBtn = document.getElementById("userProfileBtn");
 const clearChatBtn = document.getElementById("clearChatBtn");
@@ -48,9 +66,43 @@ const randomGuestBtn = document.getElementById("randomGuestBtn");
 const inviteModal = document.getElementById("inviteModal");
 const closeInviteModalBtn = document.getElementById("closeInviteModalBtn");
 const inviteContactsList = document.getElementById("inviteContactsList");
+
+const createRoomModal = document.getElementById("createRoomModal");
+const closeCreateRoomModalBtn = document.getElementById("closeCreateRoomModalBtn");
+const cancelCreateRoomBtn = document.getElementById("cancelCreateRoomBtn");
+const createRoomForm = document.getElementById("createRoomForm");
+const createRoomNameInput = document.getElementById("createRoomNameInput");
+const createRoomPasswordInput = document.getElementById("createRoomPasswordInput");
+const submitCreateRoomBtn = document.getElementById("submitCreateRoomBtn");
+
+const joinRoomModal = document.getElementById("joinRoomModal");
+const closeJoinRoomModalBtn = document.getElementById("closeJoinRoomModalBtn");
+const cancelJoinRoomBtn = document.getElementById("cancelJoinRoomBtn");
+const joinRoomForm = document.getElementById("joinRoomForm");
+const joinRoomNameInput = document.getElementById("joinRoomNameInput");
+const joinRoomPasswordInput = document.getElementById("joinRoomPasswordInput");
+const submitJoinRoomBtn = document.getElementById("submitJoinRoomBtn");
+
 const toastContainer = document.getElementById("toastContainer");
 
 // Application State
+const COMMON_ROOM = {
+  id: "common_room",
+  name: "Online Chat",
+  isCustom: false
+};
+
+let currentRoom = COMMON_ROOM;
+try {
+  const cachedRoom = localStorage.getItem("comms_current_room");
+  if (cachedRoom) {
+    const parsed = JSON.parse(cachedRoom);
+    if (parsed && parsed.id) {
+      currentRoom = parsed;
+    }
+  }
+} catch (e) {}
+
 let visitorId = localStorage.getItem("chat_visitor_id");
 if (!visitorId) {
   visitorId = "usr_" + Math.random().toString(36).substring(2, 9);
@@ -132,33 +184,46 @@ function renderInviteContacts() {
 
     const btn = row.querySelector(".nord-btn-sm-invite");
     btn.addEventListener("click", async () => {
+      const inviteMsg = currentRoom.isCustom
+        ? `You have been invited by ${displayName || 'someone'} to join the private chat room "${currentRoom.name}".`
+        : `You have been invited by ${displayName || 'someone'} to join the Comms chat room.`;
+
       const inviteData = {
         type: "invite",
         contactName: contact.name,
         contactPhone: contact.phone,
-        message: `You have been invited by ${displayName || 'someone'} to join the Comms chat room.`,
+        roomId: currentRoom.id,
+        roomName: currentRoom.name,
+        isCustom: currentRoom.isCustom,
+        message: inviteMsg,
         senderName: displayName || "Visitor",
         senderId: visitorId,
         status: "pending",
         timestamp: firebase.firestore.FieldValue.serverTimestamp()
       };
 
-      // Write invite into common room with status: pending so local listener triggers email
+      // 1. Enqueue notification in 'notifications' collection so local email listener dispatches email
       try {
-        await commonRoomRef.add({
+        await db.collection("notifications").add(inviteData);
+      } catch (err) {
+        console.warn("Notifications queue write note:", err);
+      }
+
+      // 2. Log invite event into the active chat room feed
+      try {
+        const messagesRef = getRoomMessagesRef(currentRoom);
+        await messagesRef.add({
           type: "invite",
           contactName: contact.name,
           contactPhone: contact.phone,
-          status: "pending",
           senderId: visitorId,
           senderName: displayName || "Visitor",
           text: `[Invite] Invitation sent to ${contact.name}`,
-          message: `You have been invited by ${displayName || 'someone'} to join the Comms chat room.`,
+          message: inviteMsg,
           timestamp: firebase.firestore.FieldValue.serverTimestamp()
         });
       } catch (err) {
-        // Fallback write
-        db.collection("notifications").add(inviteData).catch(() => {});
+        console.warn("Chat feed invite log note:", err);
       }
 
       showToast(`Invitation sent to ${contact.name}`);
@@ -170,13 +235,13 @@ function renderInviteContacts() {
 }
 
 // ==========================================================================
-// VIEW SWITCHING (DASHBOARD ↔ CHAT)
+// VIEW SWITCHING (DASHBOARD ↔ CHAT) & LISTENER LIFECYCLE OPTIMIZATION
 // ==========================================================================
 function switchView(viewName) {
   if (viewName === "chat") {
     dashboardView.classList.remove("active-view");
     chatView.classList.add("active-view");
-    window.location.hash = "chat";
+    window.location.hash = currentRoom.isCustom ? `chat?room=${currentRoom.id}` : "chat";
 
     if (!displayName) {
       setTimeout(openNameModal, 200);
@@ -184,20 +249,33 @@ function switchView(viewName) {
       setTimeout(() => chatInput.focus(), 200);
     }
 
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    // Attach chat listener only while on chat view
+    listenToChat();
   } else {
     chatView.classList.remove("active-view");
     dashboardView.classList.add("active-view");
     window.location.hash = "dashboard";
+
+    // Clean up real-time listener when leaving chat to prevent memory & bandwidth leaks
+    if (chatUnsubscribe) {
+      chatUnsubscribe();
+      chatUnsubscribe = null;
+    }
   }
 }
 
-enterChatBtn.addEventListener("click", () => switchView("chat"));
+enterChatBtn.addEventListener("click", () => {
+  currentRoom = COMMON_ROOM;
+  try {
+    localStorage.setItem("comms_current_room", JSON.stringify(currentRoom));
+  } catch (e) {}
+  switchView("chat");
+});
 backToDashboardBtn.addEventListener("click", () => switchView("dashboard"));
 
 window.addEventListener("hashchange", () => {
   const hash = window.location.hash.replace("#", "");
-  if (hash === "chat") {
+  if (hash.startsWith("chat")) {
     switchView("chat");
   } else {
     switchView("dashboard");
@@ -333,22 +411,265 @@ nameModal.addEventListener("click", (e) => {
 });
 
 // ==========================================================================
+// CUSTOM ROOM LOGIC (CREATE & JOIN WITH PASSWORD)
+// ==========================================================================
+function sanitizeRoomId(name) {
+  if (!name) return "";
+  return name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_").replace(/^_+|_+$/g, "").substring(0, 32);
+}
+
+function updateChatHeaderUI() {
+  if (!chatTitleText || !chatRoomBadge) return;
+  if (currentRoom.isCustom) {
+    chatTitleText.textContent = currentRoom.name;
+    chatRoomBadge.textContent = "Private Room";
+    chatRoomBadge.classList.add("custom");
+  } else {
+    chatTitleText.textContent = "Online Chat";
+    chatRoomBadge.textContent = "Common Room";
+    chatRoomBadge.classList.remove("custom");
+  }
+}
+
+// Create Custom Room Modal Handlers
+function openCreateRoomModal() {
+  createRoomNameInput.value = "";
+  createRoomPasswordInput.value = "";
+  createRoomModal.classList.add("active");
+  setTimeout(() => createRoomNameInput.focus(), 80);
+}
+
+function closeCreateRoomModal() {
+  createRoomModal.classList.remove("active");
+}
+
+createCustomRoomBtn.addEventListener("click", openCreateRoomModal);
+closeCreateRoomModalBtn.addEventListener("click", closeCreateRoomModal);
+cancelCreateRoomBtn.addEventListener("click", closeCreateRoomModal);
+
+createRoomModal.addEventListener("click", (e) => {
+  if (e.target === createRoomModal) {
+    closeCreateRoomModal();
+  }
+});
+
+createRoomForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const roomName = createRoomNameInput.value.trim();
+  const password = createRoomPasswordInput.value.trim();
+
+  if (!roomName) {
+    showToast("Please enter a room name");
+    return;
+  }
+  if (!password) {
+    showToast("Please set a room password");
+    return;
+  }
+  if (password.length < 3) {
+    showToast("Password must be at least 3 characters");
+    return;
+  }
+
+  const roomId = sanitizeRoomId(roomName);
+  if (!roomId || roomId.length < 2) {
+    showToast("Room name must have at least 2 alphanumeric characters");
+    return;
+  }
+  if (roomId === "common_room") {
+    showToast("This name is reserved for the common chat room");
+    return;
+  }
+
+  submitCreateRoomBtn.disabled = true;
+  submitCreateRoomBtn.textContent = "Creating...";
+
+  try {
+    const roomDocRef = db.collection("custom_rooms").doc(roomId);
+    const docSnap = await roomDocRef.get();
+
+    if (docSnap.exists) {
+      showToast("Room already exists. Choose a different name or join it.");
+      submitCreateRoomBtn.disabled = false;
+      submitCreateRoomBtn.textContent = "Create";
+      return;
+    }
+
+    // Cryptographic hash - plain text passwords are never stored
+    const passwordHash = await hashPassword(password, roomId);
+
+    await roomDocRef.set({
+      roomId: roomId,
+      name: roomName,
+      passwordHash: passwordHash,
+      createdBy: visitorId,
+      creatorName: displayName || "Visitor",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      lastActive: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Mark room as authorized in this browser session
+    try {
+      sessionStorage.setItem("unlocked_room_" + roomId, "true");
+    } catch (e) {}
+
+    currentRoom = {
+      id: roomId,
+      name: roomName,
+      isCustom: true
+    };
+    try {
+      localStorage.setItem("comms_current_room", JSON.stringify(currentRoom));
+    } catch (e) {}
+
+    closeCreateRoomModal();
+    showToast(`Room "${roomName}" created`);
+    switchView("chat");
+  } catch (err) {
+    console.error("Create room error:", err);
+    showToast("Failed to create room. Please try again.");
+  } finally {
+    submitCreateRoomBtn.disabled = false;
+    submitCreateRoomBtn.textContent = "Create";
+  }
+});
+
+// Join Custom Room Modal Handlers
+function openJoinRoomModal() {
+  joinRoomNameInput.value = "";
+  joinRoomPasswordInput.value = "";
+  joinRoomModal.classList.add("active");
+  setTimeout(() => joinRoomNameInput.focus(), 80);
+}
+
+function closeJoinRoomModal() {
+  joinRoomModal.classList.remove("active");
+}
+
+joinCustomRoomBtn.addEventListener("click", openJoinRoomModal);
+closeJoinRoomModalBtn.addEventListener("click", closeJoinRoomModal);
+cancelJoinRoomBtn.addEventListener("click", closeJoinRoomModal);
+
+joinRoomModal.addEventListener("click", (e) => {
+  if (e.target === joinRoomModal) {
+    closeJoinRoomModal();
+  }
+});
+
+joinRoomForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const roomName = joinRoomNameInput.value.trim();
+  const password = joinRoomPasswordInput.value.trim();
+
+  if (!roomName) {
+    showToast("Please enter a room name");
+    return;
+  }
+  if (!password) {
+    showToast("Please enter the room password");
+    return;
+  }
+
+  const roomId = sanitizeRoomId(roomName);
+  if (!roomId) {
+    showToast("Please enter a valid room name");
+    return;
+  }
+
+  if (roomId === "common_room") {
+    currentRoom = COMMON_ROOM;
+    try {
+      localStorage.setItem("comms_current_room", JSON.stringify(currentRoom));
+    } catch (e) {}
+    closeJoinRoomModal();
+    showToast("Joined Common Chat Room");
+    switchView("chat");
+    return;
+  }
+
+  submitJoinRoomBtn.disabled = true;
+  submitJoinRoomBtn.textContent = "Joining...";
+
+  try {
+    const roomDocRef = db.collection("custom_rooms").doc(roomId);
+    const docSnap = await roomDocRef.get();
+
+    if (!docSnap.exists) {
+      showToast("Room not found. Check the name or create a new room.");
+      submitJoinRoomBtn.disabled = false;
+      submitJoinRoomBtn.textContent = "Join";
+      return;
+    }
+
+    const roomData = docSnap.data();
+    const enteredHash = await hashPassword(password, roomId);
+    // Backward-compatible check supporting both hashed passwords and legacy plain passwords
+    const isMatch = (roomData && roomData.passwordHash && roomData.passwordHash === enteredHash) ||
+                    (roomData && roomData.password && roomData.password === password);
+
+    if (!isMatch) {
+      showToast("Incorrect password for this room");
+      submitJoinRoomBtn.disabled = false;
+      submitJoinRoomBtn.textContent = "Join";
+      return;
+    }
+
+    // Mark room as authorized in this browser session
+    try {
+      sessionStorage.setItem("unlocked_room_" + roomId, "true");
+    } catch (e) {}
+
+    currentRoom = {
+      id: roomId,
+      name: roomData.name || roomName,
+      isCustom: true
+    };
+    try {
+      localStorage.setItem("comms_current_room", JSON.stringify(currentRoom));
+    } catch (e) {}
+
+    closeJoinRoomModal();
+    showToast(`Joined "${currentRoom.name}"`);
+    switchView("chat");
+  } catch (err) {
+    console.error("Join room error:", err);
+    showToast("Failed to join room. Please try again.");
+  } finally {
+    submitJoinRoomBtn.disabled = false;
+    submitJoinRoomBtn.textContent = "Join";
+  }
+});
+
+// ==========================================================================
 // REAL-TIME FIRESTORE CHAT
 // ==========================================================================
 const commonRoomRef = db.collection("incidents").doc("common_room").collection("messages");
 
+function getRoomMessagesRef(room) {
+  if (room && room.isCustom) {
+    return db.collection("custom_rooms").doc(room.id).collection("messages");
+  }
+  return commonRoomRef;
+}
+
 function listenToChat() {
   if (chatUnsubscribe) {
     chatUnsubscribe();
+    chatUnsubscribe = null;
   }
 
-  db.collection("incidents").doc("common_room").set({
-    type: "common_chat_room",
-    status: "active",
-    lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
-  }, { merge: true }).catch(() => {});
+  updateChatHeaderUI();
 
-  chatUnsubscribe = commonRoomRef
+  chatMessages.innerHTML = "";
+  chatEmptyState.style.display = "block";
+  chatEmptyState.textContent = currentRoom.isCustom
+    ? `Welcome to ${currentRoom.name}. No messages yet.`
+    : "No messages yet. Start the conversation.";
+  chatMessages.appendChild(chatEmptyState);
+
+  const messagesRef = getRoomMessagesRef(currentRoom);
+
+  chatUnsubscribe = messagesRef
     .orderBy("timestamp", "asc")
     .limitToLast(80)
     .onSnapshot((snapshot) => {
@@ -356,6 +677,9 @@ function listenToChat() {
 
       if (snapshot.empty) {
         chatEmptyState.style.display = "block";
+        chatEmptyState.textContent = currentRoom.isCustom
+          ? `Welcome to ${currentRoom.name}. No messages yet.`
+          : "No messages yet. Start the conversation.";
         chatMessages.appendChild(chatEmptyState);
         return;
       }
@@ -415,7 +739,16 @@ chatForm.addEventListener("submit", async (e) => {
   };
 
   try {
-    await commonRoomRef.add(newMsg);
+    const messagesRef = getRoomMessagesRef(currentRoom);
+    await messagesRef.add(newMsg);
+
+    // Update room activity timestamp only upon real message activity
+    if (currentRoom.isCustom) {
+      db.collection("custom_rooms").doc(currentRoom.id).set({
+        lastActive: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true }).catch(() => {});
+    }
+
     chatMessages.scrollTop = chatMessages.scrollHeight;
   } catch (err) {
     showToast("Message failed to send");
@@ -425,9 +758,10 @@ chatForm.addEventListener("submit", async (e) => {
   }
 });
 
-// Clear All Chat Messages
+// Clear All Chat Messages with chunked batch deletions (handles > 500 documents safely)
 clearChatBtn.addEventListener("click", async () => {
-  if (!confirm("Are you sure you want to clear all chat messages in this room?")) {
+  const roomLabel = currentRoom.isCustom ? currentRoom.name : "this room";
+  if (!confirm(`Are you sure you want to clear all chat messages in ${roomLabel}?`)) {
     return;
   }
 
@@ -435,20 +769,27 @@ clearChatBtn.addEventListener("click", async () => {
   clearChatBtn.textContent = "...";
 
   try {
-    const snapshot = await commonRoomRef.get();
+    const messagesRef = getRoomMessagesRef(currentRoom);
+    const snapshot = await messagesRef.get();
     if (snapshot.empty) {
       showToast("Chat is already empty");
       return;
     }
 
-    const batch = db.batch();
-    snapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-    await batch.commit();
+    // Firestore allows max 500 operations per batch commit; chunk in batches of 400
+    const docs = snapshot.docs;
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+      const batch = db.batch();
+      docs.slice(i, i + CHUNK_SIZE).forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+    }
 
     chatMessages.innerHTML = "";
     chatEmptyState.style.display = "block";
+    chatEmptyState.textContent = currentRoom.isCustom
+      ? `Welcome to ${currentRoom.name}. No messages yet.`
+      : "No messages yet. Start the conversation.";
     chatMessages.appendChild(chatEmptyState);
     showToast("Chat history cleared");
   } catch (err) {
@@ -471,21 +812,63 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+// URL Parameter & Deep Link Extraction
+function getUrlRoomParam() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.has("room")) {
+    return urlParams.get("room").trim();
+  }
+  const hash = window.location.hash;
+  const qIdx = hash.indexOf("?");
+  if (qIdx !== -1) {
+    const hashParams = new URLSearchParams(hash.substring(qIdx + 1));
+    if (hashParams.has("room")) {
+      return hashParams.get("room").trim();
+    }
+  }
+  return null;
+}
+
 // Bootstrap
 function initApp() {
   updateUserProfileUI();
+  updateChatHeaderUI();
   renderContacts();
   renderInviteContacts();
   listenToDynamicContacts();
 
-  if (window.location.hash === "#chat") {
+  auth.signInAnonymously().catch(() => {});
+
+  // Handle URL deep-linking (?room=xyz or #chat?room=xyz)
+  const urlRoom = getUrlRoomParam();
+  if (urlRoom) {
+    const sanitized = sanitizeRoomId(urlRoom);
+    if (sanitized === "common_room") {
+      currentRoom = COMMON_ROOM;
+      switchView("chat");
+    } else {
+      const isUnlocked = sessionStorage.getItem("unlocked_room_" + sanitized) === "true";
+      if (isUnlocked) {
+        currentRoom = {
+          id: sanitized,
+          name: urlRoom,
+          isCustom: true
+        };
+        switchView("chat");
+      } else {
+        switchView("dashboard");
+        setTimeout(() => {
+          openJoinRoomModal();
+          joinRoomNameInput.value = urlRoom;
+          joinRoomPasswordInput.focus();
+        }, 300);
+      }
+    }
+  } else if (window.location.hash.startsWith("#chat")) {
     switchView("chat");
   } else {
     switchView("dashboard");
   }
-
-  auth.signInAnonymously().catch(() => {});
-  listenToChat();
 }
 
 initApp();
