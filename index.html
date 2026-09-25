@@ -152,15 +152,38 @@
     </div>
   </div>
 
-  <!-- Invite Contact Modal Dialog -->
+  <!-- Invite Members Modal Dialog -->
   <div id="inviteModal" class="nord-modal-backdrop">
     <div class="nord-modal-box invite-modal-box">
       <div class="modal-header-row">
-        <h3 class="modal-heading">Invite Contact</h3>
+        <h3 class="modal-heading">Invite Members</h3>
         <button type="button" id="closeInviteModalBtn" class="nord-btn-close">Close</button>
       </div>
-      <p class="modal-subtext">Select a contact to send an email invitation requesting them to join this chat room.</p>
+      <p class="modal-subtext">Send an email invitation requesting someone to join this chat room.</p>
 
+      <!-- External Person Email Section -->
+      <div class="invite-external-section">
+        <label class="invite-section-label" for="inviteEmailInput">Invite by Email</label>
+        <form id="inviteExternalForm" class="invite-external-form">
+          <div class="invite-input-row">
+            <input 
+              type="email" 
+              id="inviteEmailInput" 
+              class="nord-input invite-email-input" 
+              placeholder="Enter email address (e.g. name@example.com)" 
+              required 
+            />
+            <button type="submit" id="sendEmailInviteBtn" class="nord-btn-invite-send">Invite</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Divider -->
+      <div class="invite-divider">
+        <span>OR CHOOSE PRESET CONTACT</span>
+      </div>
+
+      <!-- Preset Contacts Section -->
       <div id="inviteContactsList" class="invite-contacts-list">
         <!-- Rendered dynamically -->
       </div>
@@ -174,7 +197,7 @@
         <h3 class="modal-heading">Create Custom Room</h3>
         <button type="button" id="closeCreateRoomModalBtn" class="nord-btn-close">Close</button>
       </div>
-      <p class="modal-subtext">Set a room name and password to start a private room.</p>
+      <p class="modal-subtext">Set a room name and password to start a custom room.</p>
 
       <form id="createRoomForm" class="modal-form">
         <input 
