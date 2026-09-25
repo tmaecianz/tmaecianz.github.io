@@ -598,18 +598,88 @@ body {
   padding: 9px 12px;
 }
 
-/* Invite Modal Contacts List */
+/* Invite Modal */
 .invite-modal-box {
-  max-width: 360px;
+  max-width: 380px;
+}
+
+.invite-external-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.invite-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--nord9);
+  text-transform: uppercase;
+}
+
+.invite-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.invite-email-input {
+  flex: 1;
+  font-size: 0.85rem;
+  padding: 8px 10px;
+}
+
+.nord-btn-invite-send {
+  background-color: var(--nord8);
+  color: var(--nord0);
+  border: none;
+  border-radius: 4px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+
+.nord-btn-invite-send:hover {
+  opacity: 0.9;
+}
+
+.nord-btn-invite-send:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.invite-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 12px 0 8px;
+}
+
+.invite-divider::before,
+.invite-divider::after {
+  content: "";
+  flex: 1;
+  border-bottom: 1px solid var(--nord2);
+}
+
+.invite-divider span {
+  padding: 0 8px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--nord3);
+  letter-spacing: 0.06em;
 }
 
 .invite-contacts-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 280px;
+  max-height: 220px;
   overflow-y: auto;
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 .invite-contact-row {

@@ -66,6 +66,9 @@ const randomGuestBtn = document.getElementById("randomGuestBtn");
 const inviteModal = document.getElementById("inviteModal");
 const closeInviteModalBtn = document.getElementById("closeInviteModalBtn");
 const inviteContactsList = document.getElementById("inviteContactsList");
+const inviteExternalForm = document.getElementById("inviteExternalForm");
+const inviteEmailInput = document.getElementById("inviteEmailInput");
+const sendEmailInviteBtn = document.getElementById("sendEmailInviteBtn");
 
 const createRoomModal = document.getElementById("createRoomModal");
 const closeCreateRoomModalBtn = document.getElementById("closeCreateRoomModalBtn");
@@ -388,7 +391,13 @@ nameForm.addEventListener("submit", (e) => {
 // INVITE CONTACT MODAL
 // ==========================================================================
 function openInviteModal() {
+  if (inviteEmailInput) {
+    inviteEmailInput.value = "";
+  }
   inviteModal.classList.add("active");
+  setTimeout(() => {
+    if (inviteEmailInput) inviteEmailInput.focus();
+  }, 80);
 }
 
 function closeInviteModal() {
@@ -403,6 +412,70 @@ inviteModal.addEventListener("click", (e) => {
     closeInviteModal();
   }
 });
+
+if (inviteExternalForm) {
+  inviteExternalForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = (inviteEmailInput.value || "").trim();
+    if (!email || !email.includes("@")) {
+      showToast("Please enter a valid email address");
+      return;
+    }
+
+    sendEmailInviteBtn.disabled = true;
+    sendEmailInviteBtn.textContent = "...";
+
+    const inviteMsg = currentRoom.isCustom
+      ? `You have been invited by ${displayName || 'someone'} to join chat room "${currentRoom.name}".`
+      : `You have been invited by ${displayName || 'someone'} to join the Comms chat room.`;
+
+    const inviteData = {
+      type: "invite",
+      contactName: email,
+      recipientEmail: email,
+      email: email,
+      target: email,
+      roomId: currentRoom.id,
+      roomName: currentRoom.name,
+      isCustom: currentRoom.isCustom,
+      message: inviteMsg,
+      senderName: displayName || "Visitor",
+      senderId: visitorId,
+      status: "pending",
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    // 1. Enqueue notification in 'notifications' collection so local email listener dispatches email
+    try {
+      await db.collection("notifications").add(inviteData);
+    } catch (err) {
+      console.warn("Notifications queue write note:", err);
+    }
+
+    // 2. Log invite event into the active chat room feed
+    try {
+      const messagesRef = getRoomMessagesRef(currentRoom);
+      await messagesRef.add({
+        type: "invite",
+        contactName: email,
+        recipientEmail: email,
+        senderId: visitorId,
+        senderName: displayName || "Visitor",
+        text: `[Invite] Invitation sent to ${email}`,
+        message: inviteMsg,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } catch (err) {
+      console.warn("Chat feed invite log note:", err);
+    }
+
+    showToast(`Invitation sent to ${email}`);
+    sendEmailInviteBtn.disabled = false;
+    sendEmailInviteBtn.textContent = "Invite";
+    inviteEmailInput.value = "";
+    closeInviteModal();
+  });
+}
 
 nameModal.addEventListener("click", (e) => {
   if (e.target === nameModal) {
@@ -422,14 +495,24 @@ function updateChatHeaderUI() {
   if (!chatTitleText || !chatRoomBadge) return;
   if (currentRoom.isCustom) {
     chatTitleText.textContent = currentRoom.name;
-    chatRoomBadge.textContent = "Private Room";
-    chatRoomBadge.classList.add("custom");
+    chatRoomBadge.textContent = "";
+    chatRoomBadge.style.display = "none";
+    if (clearChatBtn) {
+      clearChatBtn.textContent = "Delete";
+      clearChatBtn.title = "Delete this custom chat room";
+    }
   } else {
     chatTitleText.textContent = "Online Chat";
     chatRoomBadge.textContent = "Common Room";
+    chatRoomBadge.style.display = "";
     chatRoomBadge.classList.remove("custom");
+    if (clearChatBtn) {
+      clearChatBtn.textContent = "Clear";
+      clearChatBtn.title = "Clear all messages";
+    }
   }
 }
+
 
 // Create Custom Room Modal Handlers
 function openCreateRoomModal() {
@@ -758,10 +841,53 @@ chatForm.addEventListener("submit", async (e) => {
   }
 });
 
-// Clear All Chat Messages with chunked batch deletions (handles > 500 documents safely)
+// Clear Messages or Delete Custom Room Action Handler
 clearChatBtn.addEventListener("click", async () => {
-  const roomLabel = currentRoom.isCustom ? currentRoom.name : "this room";
-  if (!confirm(`Are you sure you want to clear all chat messages in ${roomLabel}?`)) {
+  if (currentRoom.isCustom) {
+    if (!confirm(`Are you sure you want to delete custom room "${currentRoom.name}"?`)) {
+      return;
+    }
+
+    clearChatBtn.disabled = true;
+    clearChatBtn.textContent = "...";
+
+    try {
+      const roomDocRef = db.collection("custom_rooms").doc(currentRoom.id);
+
+      // 1. Delete all messages inside custom_rooms/{roomId}/messages
+      const messagesSnap = await roomDocRef.collection("messages").get();
+      const docs = messagesSnap.docs;
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+        const batch = db.batch();
+        docs.slice(i, i + CHUNK_SIZE).forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+      }
+
+      // 2. Delete room document from custom_rooms
+      await roomDocRef.delete();
+
+      showToast(`Room "${currentRoom.name}" deleted`);
+
+      // 3. Reset room state and navigate back to dashboard
+      currentRoom = COMMON_ROOM;
+      try {
+        localStorage.removeItem("comms_current_room");
+      } catch (e) {}
+
+      switchView("dashboard");
+    } catch (err) {
+      console.error("Failed to delete custom room:", err);
+      showToast("Failed to delete custom room");
+    } finally {
+      clearChatBtn.disabled = false;
+      clearChatBtn.textContent = "Delete";
+    }
+    return;
+  }
+
+  // Common Room: Clear chat messages with chunked batch deletions
+  if (!confirm("Are you sure you want to clear all chat messages in the Common Room?")) {
     return;
   }
 
@@ -787,9 +913,7 @@ clearChatBtn.addEventListener("click", async () => {
 
     chatMessages.innerHTML = "";
     chatEmptyState.style.display = "block";
-    chatEmptyState.textContent = currentRoom.isCustom
-      ? `Welcome to ${currentRoom.name}. No messages yet.`
-      : "No messages yet. Start the conversation.";
+    chatEmptyState.textContent = "No messages yet. Start the conversation.";
     chatMessages.appendChild(chatEmptyState);
     showToast("Chat history cleared");
   } catch (err) {
